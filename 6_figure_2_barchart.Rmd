@@ -1,0 +1,139 @@
+---
+title: "6_figure_2_barchart"
+author: "Wesley Hayes"
+date: "2024-03-05"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+library(ggpattern)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Creating Barchart DF
+```{r}
+#Data from Table 1 generated from data in script 5
+Race <- c("Predominately BIPOC","Predominately BIPOC","Predominately White","Predominately White")
+Poverty <- c("High-poverty", "Low-poverty","High-poverty", "Low-poverty")
+Well_population <- c(9,5.5,28.7,56.7)
+Well_testing_population <- c(5.2,1.8,31.5,61.5)
+
+index_data <- data.frame(Race,Poverty,Well_population,Well_testing_population)
+```
+
+#Processing and Plotting
+```{r}
+#pivotting for plotting
+index_data <- index_data %>% pivot_longer(cols=Well_population:Well_testing_population) #Replace Well w/ Testing
+
+#Adding Spaces to future labels
+index_data$name <-str_replace_all(index_data$name,"_t"," t")
+index_data$name <-str_replace_all(index_data$name,"_p"," p")
+
+#Ordering
+index_data$name <- factor(index_data$name ,
+                             levels=c("Well population",
+                                      "Well testing population"))
+index_data$Poverty<- factor(index_data$Poverty,
+                        levels=c("High-poverty",
+                                 "Low-poverty"))
+
+#Plotting
+barchart1 <- ggplot(data=index_data,aes(x=name,y=value,fill=Race,pattern=Poverty)) + 
+  geom_bar_pattern(stat="identity",position = position_dodge(preserve = "single"),
+                   color = "#000000", 
+                   pattern_fill = "#000000",
+                   pattern_angle = 45,
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6)+
+  xlab("")+
+  scale_y_continuous(limits=c(0,80),expand = c(0, 0),breaks = seq(0,80, by = 10))+
+  ylab("Percent of population") +
+  scale_fill_manual(values=c("#b2df8a","#a6cee3")) +
+  scale_pattern_manual(values=c("Low-poverty"="stripe","High-poverty"="none"))+
+  theme_classic() +
+  theme(text=element_text(size=20,color="#000000"),
+        axis.text.x = element_text(colour = "#000000"),
+        axis.text.y = element_text(colour = "#000000"),
+        panel.border = element_rect(color = "black", 
+                                    fill = NA, 
+                                    size = 1),
+        plot.margin = margin(t = 10, r = 5, b = 5, l = 5, unit = "pt"))+
+  guides(pattern = guide_legend(override.aes = list(fill = "#FFFFFF")),
+         fill = guide_legend(override.aes = list(pattern = "none")))
+
+ggsave("output//barchart1.pdf",barchart1,width=9,height=6)
+```
+
+#Creating Urban/Rural Barchart DF
+```{r}
+#Data from Table 1 generated from data in script 5
+Race <- c("Predominately BIPOC","Predominately BIPOC","Predominately White","Predominately White")
+Poverty <- c("High-poverty", "Low-poverty","High-poverty", "Low-poverty")
+Urban_well_population <- c(7,11.1,16.8,65.1)
+Rural_well_population <- c(4.3,3.4,20.6,71.7)
+
+ur_index_data <- data.frame(Race,Poverty,Urban_well_population,Rural_well_population)
+```
+
+#Processing and Plotting
+```{r}
+#pivotting for plotting
+ur_index_data <- ur_index_data %>% pivot_longer(cols=Urban_well_population:Rural_well_population) #Replace Well w/ Testing
+
+#Adding Spaces to future labels
+ur_index_data$name <-str_replace_all(ur_index_data$name,"_w"," w")
+ur_index_data$name <-str_replace_all(ur_index_data$name,"_p"," p")
+
+#Ordering
+ur_index_data$name <- factor(ur_index_data$name ,
+                             levels=c("Urban well population",
+                                      "Rural well population"))
+ur_index_data$Poverty<- factor(ur_index_data$Poverty,
+                        levels=c("High-poverty",
+                                 "Low-poverty"))
+
+#Plotting
+barchart2 <- ggplot(data=ur_index_data,aes(x=name,y=value,fill=Race,pattern=Poverty)) + 
+  geom_bar_pattern(stat="identity",position = position_dodge(preserve = "single"),
+                   color = "#000000", 
+                   pattern_fill = "#000000",
+                   pattern_angle = 45,
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6)+
+  xlab("")+
+  scale_y_continuous(limits = c(0,80), expand = c(0, 0),breaks = seq(0,80, by = 10))+
+  ylab("Percent of population") +
+  scale_fill_manual(values=c("#b2df8a","#a6cee3")) +
+  scale_pattern_manual(values=c("Low-poverty"="stripe","High-poverty"="none"))+
+  theme_classic() +
+  theme(text=element_text(size=20,color="#000000"),
+        axis.text.x = element_text(colour = "#000000"),
+        axis.text.y = element_text(colour = "#000000"),
+        panel.border = element_rect(color = "black", 
+                                    fill = NA, 
+                                    size = 1),
+        plot.margin = margin(t = 10, r = 5, b = 5, l = 5, unit = "pt"))+
+  guides(pattern = guide_legend(override.aes = list(fill = "#FFFFFF")),
+         fill = guide_legend(override.aes = list(pattern = "none")))
+
+ggsave("output//barchart2.pdf",barchart2,width=9,height=6)
+```
+

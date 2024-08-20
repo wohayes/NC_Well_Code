@@ -1,0 +1,140 @@
+---
+title: "Testing Data Processing"
+author: "Wesley Hayes"
+date: "2024-03-01"
+output: html_document
+---
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+library(mapview)
+```
+#Reading and Cleaning NCWELL Data
+```{r}
+#reading ncwell data
+nc_well <- read.csv("raw//NCwelldata_individual_well_tests.csv")
+
+#removing few NA in lat long values 
+nc_well <- nc_well[!is.na(nc_well$latitude),] #removes 14 reports
+nc_well <- nc_well[!is.na(nc_well$longitude),] #removes no additional reports (nas were paired)
+
+#creates unique well_id by combining lat and long and assigning a factor to the combination
+nc_well_id <- nc_well %>% 
+  mutate(wellid=paste(latitude,longitude)) %>% 
+  mutate(wellid=as.integer(factor(wellid)))   #generates 93913 unique ids
+
+
+#creating a testing location df and selecting relevant variables
+nc_testing_locations <- nc_well_id %>% select(sample_id,Score,Addr_type,county,FIPS,date,wellid,latitude,longitude)
+
+#removing duplicate wellids to create a dataframe of unique well testing locations
+nc_testing_locations <- nc_testing_locations[!duplicated(nc_well_id$wellid),]
+
+#creating lat long id object for pairing later
+nc_well_id_latlong <- nc_testing_locations %>% select(wellid,latitude,longitude)
+
+#creating simple features point object from well tests
+nc_testing_locations <- st_as_sf(nc_testing_locations,coords=c("longitude","latitude"),crs=4326)
+```
+#Date Processing
+```{r}
+nc_testing_locations$date <- mdy(nc_testing_locations$date)
+nc_testing_locations$year <- year(nc_testing_locations$date)
+
+yearly_summary <- nc_testing_locations %>% group_by(year) %>% summarise(test_count=n())
+
+time_plot <- ggplot(data=yearly_summary,aes(x=year,y=test_count)) + geom_point(size=2) + geom_line() +
+   theme_classic() + xlab("Year") + ylab("Individual Wells Tested")+
+  theme(text=element_text(size=15,color="black"),
+        axis.text.y = element_text(colour = "black"),
+        axis.text.x = element_text(size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1),
+        plot.margin = margin(t = 10, r = 20, b = 5, l = 5, unit = "pt"))
+
+ggsave("output//time_plot.pdf",time_plot,width=6,height=6)
+```
+
+
+#Filtering and Checking Testing
+```{r}
+#testing three different census tracts (1 in alamance, mecklenburg, and wake)
+nc_testing_locations_filter1 <- nc_testing_locations %>% filter(FIPS=="37001020300")
+
+mapview(nc_testing_locations_filter1)
+
+
+nc_testing_locations_filter2 <- nc_testing_locations %>% filter(FIPS=="37119003012")
+
+mapview(nc_testing_locations_filter2)
+
+
+nc_testing_locations_filter3 <- nc_testing_locations %>% filter(FIPS=="37183052706")
+
+mapview(nc_testing_locations_filter3)
+```
+
+#Creating Arsenic Testing Dataframe
+```{r}
+#Filtering for relevant arsenic variables and dropping missing arsenic counts
+arsenic_data <- nc_well_id %>% select(wellid,Arsenic_ppb_imp,date) %>%  drop_na(Arsenic_ppb_imp)
+
+#Removing arsenic tests that occurred after an initial test in individual wells
+arsenic_data_first <- arsenic_data %>% 
+  group_by(wellid) %>% 
+  filter(date==min(date))
+
+
+#removing geometry so repeat analysis runs faster
+arsenic_data_first <- arsenic_data_first %>% st_drop_geometry()
+
+#filtering only the tests with 1 occurrence on the initial testing day
+#Currently take too long to run because the geometry is still there, will to remove and re-add geometry
+arsenic_data_ind <- arsenic_data_first %>%
+  group_by(wellid) %>% 
+  summarize(n=n()) %>% 
+  filter(n==1)
+
+#testing results + drop irrelevant column
+arsenic_data_ind <- arsenic_data_ind %>% left_join(arsenic_data_first,by="wellid") %>% select(-n)
+
+```
+
+#Processing Arsenic Data
+```{r}
+#using lubridate to format dates
+arsenic_data_ind$date <- mdy(arsenic_data_ind$date)
+
+#filtering arsenic_data_ind to post 2/1/2009 when the mrl rose to 5 ppb
+arsenic_data_ind <- arsenic_data_ind %>% filter(date>as_date("2009-02-01"))
+
+#calculating binary exceedance based on mrl of 5 for filtered date range
+arsenic_data_ind <- arsenic_data_ind %>% mutate(exceedance_5ppb=ifelse(Arsenic_ppb_imp>=5,1,0))
+```
+
+#Output
+```{r}
+st_write(nc_testing_locations,"output//testing_locations.shp")
+#removing geometry so outputs can be written as csv rather than shapefile
+nc_testing_locations <- nc_testing_locations %>% st_drop_geometry()
+
+#Adding lat longs back for csv writting
+nc_testing_locations <- nc_testing_locations %>% left_join(nc_well_id_latlong,by="wellid")
+arsenic_data_ind <- arsenic_data_ind %>% left_join(nc_well_id_latlong,by="wellid")
+
+#writing csvs
+write.csv(nc_testing_locations,"output//nc_testing_locations.csv")
+write.csv(arsenic_data_ind,"output//arsenic_data_ind.csv")
+```
+
+ 
+

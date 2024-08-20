@@ -1,0 +1,75 @@
+---
+title: "10_bg_summary"
+author: "Wesley"
+date: "2024-03-14"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Loading Data
+```{r}
+#loading bg full data
+bg_combined <- read.csv("output//block_group_data.csv")
+
+bg_no_predicted_wells <- bg_combined %>% filter(is.na(well_count)==TRUE)
+```
+
+#Processing Urban/Rural 
+```{r}
+#converting binary urban area to urban/rural string
+bg_combined <- bg_combined %>% mutate(class=ifelse(urban_area==1,"Urban","Rural"))
+```
+
+
+#Plotting
+```{r}
+income_violin <- ggplot(bg_combined) + geom_violin(aes(x=class,y=bg_poverty,fill=class)) + scale_fill_manual(values=c("#d95f0e","#feb24c")) + theme_classic() + xlab("") + ylab("BG Percent Poverty") + theme(legend.position = "none",text=element_text(size=15,color="black"),
+        axis.text.y = element_text(size=15,colour = "black"),
+        axis.text.x = element_text(size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+
+bipoc_violin <- ggplot(bg_combined) + geom_violin(aes(x=class,y=bg_bipoc,fill=class)) + scale_fill_manual(values=c("#756bb1","#bcbddc")) + theme_classic() + xlab("") + ylab("BG BIPOC Percentage") + theme(legend.position = "none",text=element_text(size=15,color="black"),
+        axis.text.y = element_text(size=15,colour = "black"),
+        axis.text.x = element_text(size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+
+ggsave("output//income_violin.pdf",income_violin,width=6,height=6)
+ggsave("output//bipoc_violin.pdf",bipoc_violin,width=6,height=6)
+
+income_violin
+bipoc_violin
+```
+```{r}
+bg_scatter <- bg_combined %>% filter(well_count!=0)
+bg_scatter_plot <- ggplot(bg_scatter, aes(x=bg_bipoc, y=bg_poverty)) + geom_point() + xlab("BG BIPOC Percentage") + ylab("BG Poverty  Percentage") + geom_smooth(method="lm") + stat_cor(method = "spearman", label.x = -5, label.y = 100) +
+  theme_classic()+
+  theme(legend.position = "none",text=element_text(size=15,color="black"),
+        axis.text.y = element_text(size=15,colour = "black"),
+        axis.text.x = element_text(size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+bg_scatter_plot
+
+shapiro.test(bg_scatter$bg_bipoc)
+shapiro.test(bg_scatter$bg_poverty)
+
+cor.test(data=bg_scatter,x=bg_bipoc,y=bg_poverty, method = "spearman")
+
+ggsave("output//bg_scatter.pdf",bg_scatter_plot,width=6,height=6)
+```
+
+

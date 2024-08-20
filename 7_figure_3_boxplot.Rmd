@@ -1,0 +1,178 @@
+---
+title: "7_figure_3_boxplot"
+author: "Wesley Hayes"
+date: "2024-03-06"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Loading Data 
+```{r}
+#Loading Census Data
+bg_demo <- st_read("output//bg_demo.shp")
+tr_demo <- st_read("output//tract_demo.shp")
+co_demo <- st_read("output//county_demo.shp")
+
+#loading testing dfs
+nc_testing_locations <- read.csv("output//nc_testing_locations.csv")
+
+#loading well predictions
+bg_wells <- read.csv("output//bg_wells.csv")
+tr_wells <- read.csv("output//tr_wells.csv")
+co_wells <- read.csv("output//co_wells.csv")
+```
+
+#Processing Testing Locations 
+```{r}
+#creating simple features point object from testing locations
+nc_testing_locations <- st_as_sf(nc_testing_locations,coords=c("longitude","latitude"),crs=4326)
+
+#adding demographics based on testing location
+nc_testing_locations <- nc_testing_locations %>% st_join(bg_demo)
+nc_testing_locations <- nc_testing_locations %>% st_join(tr_demo)
+nc_testing_locations <- nc_testing_locations %>% st_join(co_demo)
+
+#dropping geometry to speed calcs
+nc_testing_locations <- nc_testing_locations %>% st_drop_geometry()
+
+#counting tests in each level
+bg_tests <- nc_testing_locations %>% group_by(BG_ID) %>% summarize(test_count=n())
+tr_tests <- nc_testing_locations %>% group_by(TR_ID) %>% summarize(test_count=n())
+co_tests <- nc_testing_locations %>% group_by(CO_ID) %>% summarize(test_count=n())
+```
+
+#Creating Joined DFs
+```{r}
+#converting IDs to characters
+bg_wells$BG_ID <- as.character(bg_wells$BG_ID)
+tr_wells$TR_ID <- as.character(tr_wells$TR_ID)
+co_wells$CO_ID <- as.character(co_wells$CO_ID)
+
+#joining
+bg_variables <- bg_demo %>%
+  left_join(bg_tests,by="BG_ID") %>%
+  left_join(bg_wells,by="BG_ID")
+tr_variables <- tr_demo %>%
+  left_join(tr_tests,by="TR_ID") %>%
+  left_join(tr_wells,by="TR_ID")
+co_variables <- co_demo %>%
+  left_join(co_tests,by="CO_ID") %>%
+  left_join(co_wells,by="CO_ID")
+```
+
+```{r}
+#replacing NAs with 0 for all level variable DFs
+bg_variables$well_count[is.na(bg_variables$well_count)] <- 0
+bg_variables$test_count[is.na(bg_variables$test_count)] <- 0
+
+tr_variables$well_count[is.na(tr_variables$well_count)] <- 0
+tr_variables$test_count[is.na(tr_variables$test_count)] <- 0
+
+co_variables$well_count[is.na(co_variables$well_count)] <- 0
+co_variables$test_count[is.na(co_variables$test_count)] <- 0
+
+
+#repeating bipoc based on number of wells in each delineation level
+welltotal_bg <- data.frame(bipoc=rep(bg_variables$bg_bipoc,bg_variables$well_count))
+welltotal_bg <- welltotal_bg %>% mutate(level="Block Group")
+
+welltotal_tr <- data.frame(bipoc=rep(tr_variables$tr_bipoc,tr_variables$well_count))
+welltotal_tr <- welltotal_tr %>% mutate(level="Census Tract")
+
+welltotal_co <- data.frame(bipoc=rep(co_variables$co_bipoc,co_variables$well_count))
+welltotal_co <- welltotal_co %>% mutate(level="County")
+
+#combining and adding well pop identifier
+welltotal <- bind_rows(welltotal_bg,welltotal_tr,welltotal_co)
+welltotal <- welltotal %>% mutate(degree="Well Population")
+
+#repeating bipoc based on number of tests in each delineation level
+testtotal_bg <- data.frame(bipoc=rep(bg_variables$bg_bipoc,bg_variables$test_count))
+testtotal_bg <- testtotal_bg %>% mutate(level="Block Group")
+
+testtotal_tr <- data.frame(bipoc=rep(tr_variables$tr_bipoc,tr_variables$test_count))
+testtotal_tr <- testtotal_tr %>% mutate(level="Census Tract")
+
+testtotal_co <- data.frame(bipoc=rep(co_variables$co_bipoc,co_variables$test_count))
+testtotal_co <- testtotal_co %>% mutate(level="County")
+
+#combining and adding test pop identifier
+testtotal <- bind_rows(testtotal_bg,testtotal_tr,testtotal_co)
+testtotal <- testtotal %>% mutate(degree="Tested Well Population")
+
+#combining repeated DFs and factorizing to order
+full_figure <- bind_rows(welltotal,testtotal)
+full_figure$level <- factor(full_figure$level , levels=c("Block Group", "Census Tract", "County"))
+full_figure$degree <- factor(full_figure$degree , levels=c("Well Population", "Tested Well Population"))
+
+results_figure <- ggplot(data=full_figure,aes(x=level,y=bipoc ,fill=degree)) +
+  geom_boxplot(outlier.shape=NA,color="black") +
+  ylab("Estimated Household BIPOC Percentage") +
+  xlab("") +
+  theme_classic() +
+  theme(text=element_text(size=15,color="black",),
+        axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"),
+        panel.border = element_rect(color = "black", 
+                                    fill = NA, 
+                                    size = 1)) +
+  scale_fill_manual(values=c("#bdbdbd","#fc9272"))
+results_figure 
+
+well_full_figure <- full_figure %>% filter(degree=="Well Population")
+
+results_figure2 <- ggplot(data=well_full_figure,aes(x=level,y=bipoc)) +
+  geom_boxplot(outlier.shape=NA,color="black",fill="#a6bddb") +
+  scale_y_continuous(limits = c(0,100), expand = c(0, 0),breaks = seq(0,100, by = 20))+
+  ylab("Weighted average BIPOC percentage") +
+  xlab("") +
+  theme_classic() +
+  theme(text=element_text(size=15,color="black",),
+        axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"),
+        panel.border = element_rect(color = "black", 
+                                    fill = NA, 
+                                    size = 1),
+        plot.margin = margin(t = 10, r = 5, b = 5, l = 5, unit = "pt")) 
+results_figure2
+
+ggsave("output//boxplot.pdf",results_figure2,width=6,height=6)
+
+bg_median <- well_full_figure %>% filter(level=="Block Group") %>% pull(bipoc) %>% median()
+tr_median <- well_full_figure %>% filter(level=="Census Tract") %>% pull(bipoc) %>% median()
+co_median <- well_full_figure %>% filter(level=="County") %>% pull(bipoc) %>% median()
+
+kruskal <- well_full_figure %>% filter(level=="Block Group"|level=="County")
+
+kruskal.test(bipoc~level,kruskal)
+```
+#Experiment with CO level index
+```{r}
+#creating index using 50% bipoc and 16.4 % poverty as threshold
+#https://www.census.gov/content/dam/Census/library/publications/2016/acs/acsbr15-01.pdf
+co_variables <- co_variables %>% mutate(index=ifelse(co_bipoc > 50 & co_poverty >= 16.4,4,ifelse(co_bipoc > 50 & co_poverty < 16.4,3,ifelse(co_bipoc <= 50 & co_poverty >= 16.4,2,1))))
+
+co_summary <- co_variables %>% 
+  group_by(index) %>% 
+  summarise(well_total=sum(well_count,na.rm=TRUE),
+            test_total=sum(test_count,na.rm=TRUE))
+```
+

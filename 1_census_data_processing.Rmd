@@ -1,0 +1,153 @@
+---
+title: "Census Data Processing"
+author: "Wesley Hayes"
+date: "3/1/2024"
+output: html_document
+---
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+```
+
+#Checking Tidy Census Variables
+```{r}
+#checking tidycensus variables for codes used in tidycensus calls
+#sf1_variables_2010 <- load_variables(2010,"sf1")
+#acs_variables_2015 <- load_variables(2015,"acs5")
+```
+#Block Group Level Demographics
+``` {r}
+#race from 2010 decennial census
+bg_race <- get_decennial(state="NC",
+                         geography="block group",
+                         year=2010,
+                         sumfile = "sf1",
+                         variables= c(total_pop="P005001",
+                                      white_alone="P005003"
+                                      ),
+                         geometry=TRUE)
+#cleaning race data and calculating bipoc percentage
+bg_race <- bg_race %>% 
+           rename("BG_ID"="GEOID") %>% 
+           pivot_wider(names_from = variable,values_from = value) %>% 
+           mutate(bg_bipoc=(total_pop-white_alone)/total_pop*100) %>% 
+           select(-NAME,-white_alone)
+
+#percent poverty from 2015 5-yr acs
+bg_income <- get_acs(state="NC",
+                         geography="block group",
+                         year=2015,
+                         variables= c(total="B17021_001",
+                                      total_below="B17021_002"))
+#cleaning poverty data and calculating percent poverty
+bg_income <- bg_income %>% 
+           rename("BG_ID"="GEOID") %>% 
+           select(-moe) %>% 
+           pivot_wider(names_from = variable,values_from = estimate) %>% 
+           mutate(bg_poverty=total_below/total*100) %>% 
+           select(-NAME,-total_below,-total)
+
+#joining to creat demographic and geometry item and then clearing extra dfs
+bg_demo <- bg_race %>% left_join(bg_income,by="BG_ID")
+rm(bg_race,bg_income)
+```
+# Tract Level Demographics
+``` {r}
+#race from 2010 decennial census
+tract_race <- get_decennial(state="NC",
+                         geography="tract",
+                         year=2010,
+                         sumfile = "sf1",
+                         variables= c(total_pop="P005001",
+                                      white_alone="P005003"
+                                      ),
+                         geometry=TRUE)
+#cleaning race data and calculating bipoc percentage
+tract_race <- tract_race %>% 
+           rename("TR_ID"="GEOID") %>% 
+           pivot_wider(names_from = variable,values_from = value) %>% 
+           mutate(tr_bipoc=(total_pop-white_alone)/total_pop*100) %>% 
+           select(-NAME,-total_pop,-white_alone)
+
+#percent poverty from 2015 5-yr acs
+tract_income <- get_acs(state="NC",
+                         geography="tract",
+                         year=2015,
+                         variables= c(total="B17021_001",
+                                      total_below="B17021_002"))
+#cleaning poverty data and calculating percent poverty
+tract_income <- tract_income %>% 
+           rename("TR_ID"="GEOID") %>% 
+           select(-moe) %>% 
+           pivot_wider(names_from = variable,values_from = estimate) %>% 
+           mutate(tr_poverty=total_below/total*100) %>% 
+           select(-NAME,-total_below,-total)
+
+#joining to creat demographic and geometry item and then clearing extra dfs
+tract_demo <- tract_race %>% left_join(tract_income,by="TR_ID")
+rm(tract_race,tract_income)
+```
+
+
+# County Level Demographics
+``` {r}
+#race from 2010 decennial census
+county_race <- get_decennial(state="NC",
+                         geography="county",
+                         year=2010,
+                         sumfile = "sf1",
+                         variables= c(total_pop="P005001",
+                                      white_alone="P005003"
+                                      ),
+                         geometry=TRUE)
+#cleaning race data and calculating bipoc percentage
+county_race <- county_race %>% 
+           rename("CO_ID"="GEOID") %>% 
+           pivot_wider(names_from = variable,values_from = value) %>% 
+           mutate(co_bipoc=(total_pop-white_alone)/total_pop*100) %>% 
+           select(-NAME,-total_pop,-white_alone)
+
+#percent poverty from 2015 5-yr acs
+county_income <- get_acs(state="NC",
+                         geography="county",
+                         year=2015,
+                         variables= c(total="B17021_001",
+                                      total_below="B17021_002"))
+#cleaning poverty data and calculating percent poverty
+county_income <- county_income %>% 
+           rename("CO_ID"="GEOID") %>% 
+           select(-moe) %>% 
+           pivot_wider(names_from = variable,values_from = estimate) %>% 
+           mutate(co_poverty=total_below/total*100) %>% 
+           select(-NAME,-total_below,-total)
+
+#joining to create demographic and geometry item and then clearing extra dfs
+county_demo <- county_race %>% left_join(county_income,by="CO_ID")
+rm(county_race,county_income)
+```
+
+
+
+#Outputting Shapefiles + CSV
+```{r}
+#setting projection
+bg_demo <- bg_demo %>% st_transform(crs=4326)
+tract_demo <- tract_demo %>% st_transform(crs=4326)
+county_demo <- county_demo %>% st_transform(crs=4326)
+
+st_write(bg_demo,"output/bg_demo.shp",append=FALSE)
+st_write(county_demo,"output/county_demo.shp",append=FALSE)
+st_write(tract_demo,"output/tract_demo.shp",append=FALSE)
+```
+

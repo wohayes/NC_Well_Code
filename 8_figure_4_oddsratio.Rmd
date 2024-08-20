@@ -1,0 +1,264 @@
+---
+title: "Untitled"
+author: "Wesley 8_figure_4_oddsratios"
+date: "2024-03-07"
+output: html_document
+---
+
+
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+library(ggforce)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+#Loading Data 
+```{r}
+#Loading Census Data
+co_demo <- st_read("output//county_demo.shp")
+
+#loading testing dfs
+nc_testing_locations <- read.csv("output//nc_testing_locations.csv")
+arsenic_data_ind <- read.csv("output//arsenic_data_ind.csv")
+
+#loading well predictions
+co_wells <- read.csv("output//co_wells.csv")
+
+#loading bg full data
+bg_combined <- read.csv("output//block_group_data.csv")
+```
+
+#BG Level Testing Odds Ratio
+```{r}
+#removing un-indexed BGs
+bg_combined <- bg_combined %>% drop_na(index)
+
+#Counting tests and wells per index and creating untested wells object
+bg_testing_or <- bg_combined %>% group_by(index) %>% summarise(test_count=sum(test_count,na.rm=TRUE),well_count=sum(well_count,na.rm=TRUE)) %>% mutate(untested_count=well_count-test_count)
+
+#creating predom white and bipoc categories, and low + high poverty
+bg_combined <- bg_combined %>% mutate(race=ifelse(index==1|index==2,"Predominately White","Predominately BIPOC")) %>% mutate(poverty=ifelse(index==1|index==3,"Low-Poverty","Higher-Poverty"))
+
+#Counting tests and wells per index and creating untested wells object for race categories
+bg_testing_or_race <- bg_combined %>% group_by(race) %>% summarise(test_count=sum(test_count,na.rm=TRUE),well_count=sum(well_count,na.rm=TRUE)) %>% mutate(untested_count=well_count-test_count) %>% rename(index=race) %>% filter(index=="Predominately BIPOC")
+
+#Counting tests and wells per index and creating untested wells object for race categories
+bg_testing_or_poverty <- bg_combined %>% group_by(poverty) %>% summarise(test_count=sum(test_count,na.rm=TRUE),well_count=sum(well_count,na.rm=TRUE)) %>% mutate(untested_count=well_count-test_count) %>% rename(index=poverty) %>% filter(index=="Higher-Poverty")
+
+#creating totals for OR calculation
+untested_total <- sum(bg_testing_or$untested_count)
+tested_total <- sum(bg_testing_or$test_count)
+
+#converting index to character
+bg_testing_or$index <- as.character(bg_testing_or$index)
+
+#adding race categories
+bg_testing_or <- bind_rows(bg_testing_or,bg_testing_or_race,bg_testing_or_poverty)
+
+
+#calculating ORs and intervals
+bg_testing_or <- bg_testing_or %>% mutate(a=untested_count,
+                                          b=test_count,
+                                          c=untested_total-untested_count,
+                                          d=tested_total-test_count)
+bg_testing_or <- bg_testing_or %>% mutate(OR=(a/c)/(b/d),int=1.96*sqrt(1/a+1/b+1/c+1/d))
+bg_testing_or <- bg_testing_or %>% mutate(upper=exp(log(OR, base = exp(1))+int),lower=exp(log(OR, base = exp(1))-int))
+
+#factor
+bg_testing_or$index <- factor(bg_testing_or$index,levels=c("Predominately BIPOC","Higher-Poverty","4","3","2","1"))
+
+#plotting
+test_plot <- bg_testing_or %>%
+  ggplot(aes(x=index, y=OR)) + 
+  geom_point(size=3.5) +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width=0)+
+  #ggtitle("A") +
+  xlab("") +
+  scale_y_continuous(trans = 'log10',limits = c(.25,4),breaks = c(.25,.5,1,2,4))+
+  ylab("Odds of not have a DHHS testing record") +
+  geom_hline(yintercept = 1,linetype="dashed") +
+  theme_classic()+
+  theme(text=element_text(size=15,color="black"),
+        axis.text.y = element_text(colour = "black"),
+        axis.text.x = element_text( vjust = 1, hjust=1,size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+test_plot
+
+ggsave("output//test_plot.pdf",test_plot,width=9,height=6)
+```
+
+#BG Level Arsenic Odds Ratio
+```{r}
+#Counting arsenic tests and exceedances
+bg_arsenic_or <- bg_combined %>% group_by(index) %>% summarise(exceedance_count=sum(arsenic_exceedance_5ppb,na.rm=TRUE),arsenic_test_count=sum(arsenic_test_count,na.rm=TRUE)) %>%  mutate(negative_arsenic_count=arsenic_test_count-exceedance_count)
+
+#Counting arsenic tests and exceedances for race categories
+bg_arsenic_or_race <- bg_combined %>% group_by(race) %>% summarise(exceedance_count=sum(arsenic_exceedance_5ppb,na.rm=TRUE),arsenic_test_count=sum(arsenic_test_count,na.rm=TRUE)) %>% mutate(negative_arsenic_count=arsenic_test_count-exceedance_count) %>% rename(index=race) %>% filter(index=="Predominately BIPOC")
+
+#Counting tests and wells per index and creating untested wells object for race categories
+bg_arsenic_or_poverty <- bg_combined %>% group_by(poverty) %>% summarise(exceedance_count=sum(arsenic_exceedance_5ppb,na.rm=TRUE),arsenic_test_count=sum(arsenic_test_count,na.rm=TRUE)) %>% mutate(negative_arsenic_count=arsenic_test_count-exceedance_count) %>% rename(index=poverty) %>% filter(index=="Higher-Poverty")
+
+#creating totals for OR calculation
+exceedance_total <- sum(bg_arsenic_or$exceedance_count)
+arsenic_negative_total <- sum(bg_arsenic_or$negative_arsenic_count)
+
+#converting index to character
+bg_arsenic_or$index <- as.character(bg_arsenic_or$index)
+
+#adding race categories
+bg_arsenic_or <- bind_rows(bg_arsenic_or,bg_arsenic_or_race,bg_arsenic_or_poverty)
+
+
+#calculating ORs and intervals
+bg_arsenic_or <- bg_arsenic_or %>% mutate(a=exceedance_count,
+                                          b=negative_arsenic_count,
+                                          c=exceedance_total-exceedance_count,
+                                          d=arsenic_negative_total-negative_arsenic_count)
+bg_arsenic_or <- bg_arsenic_or %>% mutate(OR=(a/c)/(b/d),int=1.96*sqrt(1/a+1/b+1/c+1/d))
+bg_arsenic_or <- bg_arsenic_or %>% mutate(upper=exp(log(OR, base = exp(1))+int),lower=exp(log(OR, base = exp(1))-int))
+
+#factor
+bg_arsenic_or$index <- factor(bg_arsenic_or$index,levels=c("Predominately BIPOC","Higher-Poverty","1","2","3","4"))
+
+#plotting
+arsenic_plot <- bg_arsenic_or %>%
+  ggplot(aes(x=index, y=OR)) + 
+  geom_point(size=3.5) +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width=0)+
+  #ggtitle("A") +
+  xlab("") +
+  scale_y_continuous(trans = 'log10',limits = c(.25,4),breaks = c(.25,.5,1,2,4))+
+  ylab("Odds of Arsenic above 5 ppb") +
+  geom_hline(yintercept = 1,linetype="dashed") +
+  theme_classic()+
+  theme(text=element_text(size=15,color="black"),
+        axis.text.y = element_text(colour = "black"),
+        axis.text.x = element_text( vjust = 1, hjust=1,size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+arsenic_plot
+```
+County Testing OR
+```{r}
+#creating county id
+bg_combined <- bg_combined %>% mutate(CO_ID=substring(BG_ID,1,5))
+
+#selecting relevant variables
+county_testing_or <- bg_combined %>% dplyr::select(well_count,CO_ID,test_count,bg_bipoc)
+
+#replacing NAs in test and well count (bg_bipoc NAs are gone already)
+county_testing_or[is.na(county_testing_or)] <- 0
+
+#calculating predom BIPOC or White for each BG
+county_testing_or <- county_testing_or %>% mutate(bipoc=ifelse(bg_bipoc>=50,"Predominately BIPOC","Predominately White")) %>% dplyr::select(-bg_bipoc)
+
+#Counting wells, tests, and untested wells per county and race category
+county_testing_or <- county_testing_or %>% group_by(CO_ID,bipoc) %>% summarize(well_total=sum(well_count),test_total=sum(test_count)) %>% mutate(untested_total=well_total-test_total)
+
+#removing two groupings with slightly (1 and 2) more tests than wells (epa prediction error)
+county_testing_or <- county_testing_or %>% filter(untested_total>=0)
+
+#calculating totals for each county and joining it to the OR DF
+county_testing_totals <- county_testing_or %>% group_by(CO_ID) %>% summarise(test_sum=sum(test_total),untest_sum=sum(untested_total))
+county_testing_or <- county_testing_or %>% left_join(county_testing_totals,by="CO_ID")
+
+
+#calculating ORs and intervals
+county_testing_or <- county_testing_or %>% mutate(a=untested_total,
+                                          b=test_total,
+                                          c=untest_sum-untested_total,
+                                          d=test_sum-test_total)
+county_testing_or <- county_testing_or %>% mutate(OR=(a/c)/(b/d),int=1.96*sqrt(1/a+1/b+1/c+1/d))
+county_testing_or <- county_testing_or %>% mutate(upper=exp(log(OR, base = exp(1))+int),lower=exp(log(OR, base = exp(1))-int))
+county_testing_or <- county_testing_or %>% mutate(non_sig = 1 >= lower & 1 <= upper)
+
+county_testing_or <- county_testing_or %>% filter(is.na(non_sig)==F)
+
+county_testing_or <- county_testing_or %>% filter(bipoc=="Predominately BIPOC")
+
+
+county_or <- ggplot(data=county_testing_or,aes(x=bipoc,group=bipoc,y=OR)) + scale_color_manual(values=c("red","grey")) + geom_sina(aes(color=non_sig),size=3.5) + 
+  scale_y_continuous(trans = 'log10',limits = c(.1,10),breaks = c(.1,.2,1,5,10))+ theme_classic() + xlab("BIPOC count based on 50% threshold") + ylab("Odds of not have a DHHS testing record")+ geom_hline(yintercept = 1,linetype="dashed") +
+  theme(text=element_text(size=15,color="black"),
+        axis.text.y = element_text(colour = "black"),
+        axis.text.x = element_text(size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+
+ggsave("output//county_or.pdf",county_or,width=5,height=6)
+```
+#County Level Arsenic OR
+```{r}
+#selecting relevant variables
+county_arsenic_or <- bg_combined %>% dplyr::select(arsenic_test_count,CO_ID,arsenic_exceedance_5ppb,bg_bipoc)
+
+#replacing NAs in exceedance and tests (bg_bipoc NAs are gone already)
+county_arsenic_or[is.na(county_arsenic_or)] <- 0
+
+#calculating predom BIPOC or White for each BG
+county_arsenic_or <- county_arsenic_or %>% mutate(bipoc=ifelse(bg_bipoc>=50,"Predominately BIPOC","Predominately White")) %>% dplyr::select(-bg_bipoc)
+
+#Counting exceedance, tests, and negative test per county and race category
+county_arsenic_or <- county_arsenic_or %>% group_by(CO_ID,bipoc) %>% summarize(arsenic_test_total=sum(arsenic_test_count),exceedance_total=sum(arsenic_exceedance_5ppb)) %>% mutate(arsenic_negative_total=arsenic_test_total-exceedance_total)
+
+
+#calculating totals for each county and joining it to the OR DF
+county_arsenic_totals <- county_arsenic_or %>% group_by(CO_ID) %>% summarise(exceedance_sum=sum(exceedance_total),negative_sum=sum(arsenic_negative_total))
+county_arsenic_or <- county_arsenic_or %>% left_join(county_arsenic_totals,by="CO_ID")
+
+
+#calculating ORs and intervals
+county_arsenic_or <- county_arsenic_or %>% mutate(a=exceedance_total,
+                                          b=arsenic_negative_total,
+                                          c=exceedance_sum-exceedance_total,
+                                          d=negative_sum-arsenic_negative_total)
+county_arsenic_or <- county_arsenic_or %>% mutate(OR=(a/c)/(b/d),int=1.96*sqrt(1/a+1/b+1/c+1/d))
+county_arsenic_or <- county_arsenic_or %>% mutate(upper=exp(log(OR, base = exp(1))+int),lower=exp(log(OR, base = exp(1))-int))
+county_arsenic_or <- county_arsenic_or %>% mutate(non_sig = 1 >= lower & 1 <= upper)
+
+county_arsenic_or <- county_arsenic_or %>% filter(is.na(non_sig)==F)
+
+county_arsenic_or <- county_arsenic_or %>% filter(bipoc=="Predominately BIPOC")
+
+county_as_or <- ggplot(data=county_arsenic_or,aes(x=bipoc,group=bipoc,y=OR)) + scale_color_manual(values=c("red","grey")) + geom_sina(aes(color=non_sig),size=3.5) +
+  scale_y_continuous(trans = 'log10',limits = c(.1,10),breaks = c(.1,.2,1,5,10)) + theme_classic() + ylab("Odds of well water having measurable arsenic") + xlab("BIPOC count based on 50% threshold") + geom_hline(yintercept = 1,linetype="dashed") +
+  geom_hline(yintercept = 0.47,color="red")+
+  theme(text=element_text(size=15,color="black"),
+        axis.text.y = element_text(colour = "black"),
+        axis.text.x = element_text(size=15,colour = "black"),panel.border = element_rect(color = "black",fill = NA, size = 1))
+
+ggsave("output//county_as_or.pdf",county_as_or,width=5,height=6)
+```
+
+#Outputting tables (S7 and S8)
+```{r}
+#loading county names
+county_ids <- read.csv("raw//county_ids.csv")
+county_ids$CO_ID <- as.character(county_ids$CO_ID)
+
+#adding county names
+county_testing_or <- county_testing_or %>% left_join(county_ids,by="CO_ID")
+county_arsenic_or <- county_arsenic_or %>% left_join(county_ids,by="CO_ID")
+
+#filtering to split bipoc and white
+county_testing_or_bipoc <- county_testing_or %>% filter(bipoc=="Predominately BIPOC")
+county_testing_or_white <- county_testing_or %>% filter(bipoc=="Predominately White")
+county_arsenic_or_bipoc <- county_arsenic_or %>% filter(bipoc=="Predominately BIPOC")
+county_arsenic_or_white <- county_arsenic_or %>% filter(bipoc=="Predominately White")
+
+#output
+write.csv(county_testing_or_bipoc,"output//county_testing_or_bipoc.csv")
+write.csv(county_testing_or_white,"output//county_testing_or_white.csv")
+write.csv(county_arsenic_or_bipoc,"output//county_arsenic_or_bipoc.csv")
+write.csv(county_arsenic_or_white,"output//county_arsenic_or_white.csv")
+```
+

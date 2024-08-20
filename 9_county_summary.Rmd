@@ -1,0 +1,213 @@
+---
+title: "9_county_summary"
+author: "Wesley"
+date: "2024-03-13"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Loading Data
+```{r}
+#loading bg full data
+bg_combined <- read.csv("output//block_group_data.csv")
+county_ids <- read.csv("raw//county_ids.csv")
+```
+
+#Processing data
+```{r}
+#Converting CO_ID to character for matching
+county_ids$CO_ID <- as.character(county_ids$CO_ID)
+
+#creating ID and joining
+bg_combined <- bg_combined %>% mutate(CO_ID=substring(BG_ID,1,5)) %>% left_join(county_ids,by="CO_ID")
+```
+
+#BG index by region
+```{r}
+#assigning regions
+bg_combined <- bg_combined %>% mutate(region=ifelse(CO_NAME=='Alleghany'| CO_NAME=='Ashe'| CO_NAME=='Avery'| CO_NAME=='Buncombe'| CO_NAME=='Burke'| CO_NAME=='Caldwell'| CO_NAME=='Cherokee'| CO_NAME=='Clay'| CO_NAME=='Graham'| CO_NAME=='Haywood'| CO_NAME=='Henderson'| CO_NAME=='Jackson'| CO_NAME=='McDowell'| CO_NAME=='Macon'| CO_NAME=='Madison'| CO_NAME=='Mitchell'| CO_NAME=='Polk'| CO_NAME=='Rutherford'| CO_NAME=='Surry'| CO_NAME=='Swain'| CO_NAME=='Transylvania'| CO_NAME=='Watauga'| CO_NAME=='Wilkes'| CO_NAME=='Yancey',"Western",ifelse(CO_NAME=='Alamance'| CO_NAME=='Alexander'| CO_NAME=='Anson'| CO_NAME=='Cabarrus'| CO_NAME=='Caswell'| CO_NAME=='Catawba'| CO_NAME=='Chatham'| CO_NAME=='Cleveland'| CO_NAME=='Davidson'| CO_NAME=='Davie'| CO_NAME=='Durham'| CO_NAME=='Forsyth'| CO_NAME=='Franklin'| CO_NAME=='Gaston'| CO_NAME=='Granville'| CO_NAME=='Guilford'| CO_NAME=='Iredell'| CO_NAME=='Lee'| CO_NAME=='Lincoln'| CO_NAME=='Mecklenburg'| CO_NAME=='Montgomery'| CO_NAME=='Moore'| CO_NAME=='Orange'| CO_NAME=='Person'| CO_NAME=='Randolph'| CO_NAME=='Richmond'| CO_NAME=='Rockingham'| CO_NAME=='Rowan'| CO_NAME=='Stanly'| CO_NAME=='Stokes'| CO_NAME=='Union'| CO_NAME=='Vance'| CO_NAME=='Wake'| CO_NAME=='Warren'| CO_NAME=='Yadkin',"Piedmont","Eastern")))
+
+#regional summary
+regional_summary <- bg_combined %>% group_by(region,index) %>% summarise(n=n())
+```
+
+
+#Adding County Geometry
+```{r}
+#race from 2010 decennial census
+county_geo <- get_decennial(state="NC",
+                         geography="county",
+                         year=2010,
+                         sumfile = "sf1",
+                         variables= c(total_pop="P005001"),
+                         geometry=TRUE)
+
+#formatting co id and joining names to ids
+county_geo <- county_geo %>%
+  mutate(CO_ID=as.character(GEOID)) %>%
+  left_join(county_ids,by="CO_ID") %>% select(CO_NAME)
+```
+
+#Well and testing rates summary
+```{r}
+#grouping and finding county level rates
+county_test_well_summary <- bg_combined %>%
+  group_by(CO_NAME) %>%
+  summarise(test_count=sum(test_count,na.rm=TRUE),
+            well_count=sum(well_count,na.rm=TRUE),
+            total_pop=sum(total_pop,na.rm=TRUE),
+            pop_served=sum(pop_served,na.rm=TRUE)) %>% 
+  mutate(percent_pop_well=pop_served/total_pop*100,
+         percent_wells_tested=test_count/well_count*100)
+
+#attaching geometry
+county_test_well_summary <- county_geo %>% left_join(county_test_well_summary,by="CO_NAME")
+
+```
+
+
+#Plotting
+```{r}
+well_plot <- ggplot(data=county_test_well_summary) + 
+  geom_sf(aes(fill=well_count)) +
+  #scale_color_steps(low="#edf8e9",high="#238b45",aesthetics = "fill")+
+  scale_fill_stepsn(colours=c("#fee5d9","#fcae91","#fb6a4a","#cb181d"),name="Well Count")+ 
+  theme_classic() +
+  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),)
+well_plot
+
+density_plot <- ggplot(data=county_test_well_summary) + 
+  geom_sf(aes(fill=percent_pop_well)) + 
+  #scale_color_steps(low="#eff3ff",high="#08519c",aesthetics = "fill")+
+  scale_fill_stepsn(colours=c("#fee5d9","#fcae91","#fb6a4a","#cb181d"),name="% of Pop Served")+ 
+  theme_classic() +
+  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),)
+density_plot
+
+test_plot <- ggplot(data=county_test_well_summary) + 
+  geom_sf(aes(fill=test_count)) + 
+  #scale_color_steps(low="#eff3ff",high="#08519c",aesthetics = "fill")+
+  scale_fill_stepsn(colours=c("#f7f7f7","#cccccc","#969696","#525252"),name="Test Count")+ 
+  theme_classic() +
+  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),)
+test_plot
+
+test_rate_plot <- ggplot(data=county_test_well_summary) + 
+  geom_sf(aes(fill=percent_wells_tested)) + 
+  #scale_color_steps(low="#eff3ff",high="#08519c",aesthetics = "fill")+
+  scale_fill_stepsn(colours=c("#f7f7f7","#cccccc","#969696","#525252"),name="Percent of Wells Tested")+ 
+  theme_classic() +
+  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),)
+test_rate_plot
+```
+#County Level Demographics
+```{r}
+#calculating county level demographics
+county_demographics <- bg_combined %>%
+  mutate(bipoc_well=bg_bipoc*well_count,poverty_well=bg_poverty*well_count,bipoc_test=bg_bipoc*test_count,poverty_test=bg_poverty*test_count) %>%
+  group_by(CO_NAME) %>%
+  summarise(well_bipoc=sum(bipoc_well,na.rm=TRUE)/sum(well_count,na.rm=TRUE),
+            well_poverty=sum(poverty_well,na.rm=TRUE)/sum(well_count,na.rm=TRUE),
+            test_bipoc=sum(bipoc_test,na.rm=TRUE)/sum(test_count,na.rm=TRUE),
+            test_poverty=sum(poverty_test,na.rm=TRUE)/sum(test_count,na.rm=TRUE))
+
+#adding geometry
+county_demographics <- county_geo %>% left_join(county_demographics,by="CO_NAME")
+```
+
+#Plotting
+```{r}
+demo_plot <- ggplot(data=county_demographics) + 
+  geom_sf(aes(fill=well_bipoc)) + 
+  scale_color_steps(low="#edf8fb",high="#810f7c",aesthetics = "fill")+
+  #scale_fill_gradientn(colours=c("#edf8fb","#b3cde3","#8c96c6","#8856a7","#810f7c"),name="BIPOC % of Testing Population")+ 
+  theme_classic() +
+  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),)
+demo_plot
+
+income_plot <- ggplot(data=county_demographics) + 
+  geom_sf(aes(fill=well_poverty)) +
+  scale_color_steps(low="#f1eef6",high="#0570b0",aesthetics = "fill")+
+  #scale_fill_gradientn(colours=c("#feedde","#fdbe85","#fd8d3c","#e6550d","#a63603"),name="Median Income of Testing Pop")+ 
+  theme_classic() +
+  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),)
+income_plot
+```
+#arsenic summary table (table s2)
+```{r}
+#counting arsenic tests and percentage exceedance by county
+arsenic_summary <- bg_combined %>% group_by(CO_NAME) %>% summarise(as_test_count=sum(arsenic_test_count,na.rm=TRUE),exceedance_per=sum(arsenic_exceedance_5ppb,na.rm=TRUE)/sum(arsenic_test_count,na.rm=TRUE))
+
+write.csv(arsenic_summary,"output//arsenic_county_summary.csv")
+```
+#BG county summary
+```{r}
+#counting bgs and finding demo max mins and averages
+county_bg_summary <- bg_combined %>%
+  group_by(CO_NAME) %>%
+  summarize(bg_count=n(),
+            poverty_mean=mean(bg_poverty,na.rm=TRUE),
+            poverty_min=min(bg_poverty,na.rm=TRUE),
+            poverty_max=max(bg_poverty,na.rm=TRUE),
+            bipoc_mean=mean(bg_bipoc,na.rm=TRUE),
+            bipoc_min=min(bg_bipoc,na.rm=TRUE),
+            bipoc_max=max(bg_bipoc,na.rm=TRUE))
+
+write.csv(county_bg_summary,"output//county_bg_summary.csv")
+```
+
+#outputting
+```{r}
+#dropping geometry
+county_demographics <- st_drop_geometry(county_demographics)
+county_test_well_summary <- st_drop_geometry(county_test_well_summary)
+
+#joining
+county_test_well_summary <- county_test_well_summary %>% left_join(county_demographics,by="CO_NAME")
+
+#output
+write.csv(county_test_well_summary,"output//county_general_summary.csv")
+```
+

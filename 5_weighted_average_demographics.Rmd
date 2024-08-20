@@ -1,0 +1,130 @@
+---
+title: "5_weighted_average_demographics"
+author: "Wesley Hayes"
+date: "2024-03-04"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Loading Data
+```{r}
+#loading testing dfs
+nc_testing_locations <- read.csv("output//nc_testing_locations.csv")
+
+#creating simple features point object from testing locations
+nc_testing_locations <- st_as_sf(nc_testing_locations,coords=c("longitude","latitude"),crs=4326)
+
+#loading well predictions
+block_wells <- read.csv("output//block_wells.csv")
+
+#loading bg full data
+bg_combined <- read.csv("output//block_group_data.csv")
+```
+
+#Block Group BIPOC Percentage + geometry
+```{r}
+#race from 2010 decennial census
+block_race <- get_decennial(state="NC",
+                         geography="block",
+                         year=2010,
+                         sumfile = "sf1",
+                         variables= c(total_pop="P005001",
+                                      white_alone="P005003"),
+                         geometry=TRUE)
+
+block_race <- block_race %>% 
+           pivot_wider(names_from = variable,values_from = value) %>% 
+           mutate(block_bipoc=(total_pop-white_alone)/total_pop*100) %>% 
+           select(-NAME,-white_alone)
+
+#setting projection
+block_race <- block_race %>% st_transform(crs=4326)
+```
+#Statewide Race total pop weighted average
+```{r}
+#calculating products for weighted average calculation
+block_race <- block_race %>% mutate(bipoc_total=block_bipoc*total_pop)
+
+#calculating weighted average of bipoc percentage for total pop
+total_bipoc <- sum(block_race$bipoc_total,na.rm=TRUE)/sum(block_race$total_pop,na.rm=TRUE)
+```
+
+
+#Intersection to count testing within blocks
+```{r}
+#creating intersection to match GEOID to testing locations + dropping geometry for calculation
+intersection <- nc_testing_locations %>% 
+  st_join(block_race) %>% 
+  st_drop_geometry()
+#loses 3 points at intersection
+
+#dropping block geometry
+block_race <- block_race %>% st_drop_geometry()
+
+#checking for non-contiguous blocks
+block_count <- block_race %>% group_by(GEOID) %>% summarise(n=n())
+#there are none 
+
+#aggregating block testing
+block_testing <- intersection %>%  group_by(GEOID) %>% summarise(test_count=n())
+```
+
+#Weighted Average Race Calculation 
+```{r}
+#converting to character for join
+block_wells$GEOID <- as.character(block_wells$GEOID)
+
+#joining data
+block_race <- block_race %>% 
+  left_join(block_wells,by="GEOID") %>% 
+  left_join(block_testing,by="GEOID")
+
+#calculating products for weighted average calculation
+block_race <- block_race %>% mutate(bipoc_well=block_bipoc*well_count,
+                                    bipoc_test=block_bipoc*test_count)
+
+
+#calculating weighted average of bipoc percentage for wells and tests
+well_bipoc <- sum(block_race$bipoc_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+test_bipoc <- sum(block_race$bipoc_test,na.rm=TRUE)/sum(block_race$test_count,na.rm=TRUE)
+```
+
+#Weighted Average Poverty Calculation
+```{r}
+#calculating products for weighted average calculation
+bg_combined <- bg_combined %>% mutate(poverty_well=bg_poverty*well_count,
+                                      poverty_test=bg_poverty*test_count,
+                                      poverty_total=bg_poverty*total_pop)
+
+#calculating weighted average of poverty percentage for wells and tests
+well_poverty <- sum(bg_combined$poverty_well,na.rm=TRUE)/sum(bg_combined$well_count,na.rm=TRUE)
+test_poverty <- sum(bg_combined$poverty_test,na.rm=TRUE)/sum(bg_combined$test_count,na.rm=TRUE)
+total_poverty <- sum(bg_combined$poverty_total,na.rm=TRUE)/sum(bg_combined$total_pop,na.rm=TRUE)
+
+
+#calculating products for weighted average calculation
+bg_combined <- bg_combined %>% mutate(bipoc_well=bg_bipoc*well_count,bipoc_test=bg_bipoc*test_count)
+
+#calculating weighted average of bipoc percentage for wells and tests at the BG level
+well_bipoc_bg <- sum(bg_combined$bipoc_well,na.rm=TRUE)/sum(bg_combined$well_count,na.rm=TRUE)
+test_bipoc_bg <- sum(bg_combined$bipoc_test,na.rm=TRUE)/sum(bg_combined$test_count,na.rm=TRUE)
+```
+

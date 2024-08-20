@@ -1,0 +1,76 @@
+---
+title: "3_well_prediction_processing"
+author: "Wesley Hayes"
+date: "2024-03-04"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Loading EPA Well Count Predictions for NC Blocks
+```{r}
+#reading ncwell data
+epa_wells <- read.csv("raw//final_estimates_blocks_NC.csv")
+
+#selecting for relevant data
+epa_wells <- epa_wells %>% select(GEOID,Wells_NHU,Population_Served_Est)
+```
+
+#Assigning Census IDs
+```{r}
+epa_wells$GEOID <- as.character(epa_wells$GEOID)
+
+epa_wells <- epa_wells %>% mutate(BG_ID=substring(GEOID,1,12),
+                                      TR_ID=substring(GEOID,1,11),
+                                      CO_ID=substring(GEOID,1,5))
+```
+
+#Counting wells and well users by delineation levels
+```{r}
+block_wells <- epa_wells %>% 
+  group_by(GEOID) %>% 
+  summarise(well_count=sum(Wells_NHU,na.rm=TRUE),
+            pop_served=sum(Population_Served_Est,na.rm=TRUE)) 
+
+bg_wells <- epa_wells %>% 
+  group_by(BG_ID) %>% 
+  summarise(well_count=sum(Wells_NHU,na.rm=TRUE),
+            pop_served=sum(Population_Served_Est,na.rm=TRUE)) 
+
+tr_wells <- epa_wells %>% 
+  group_by(TR_ID) %>% 
+  summarise(well_count=sum(Wells_NHU,na.rm=TRUE),
+            pop_served=sum(Population_Served_Est,na.rm=TRUE))
+
+co_wells <- epa_wells %>% 
+  group_by(CO_ID) %>% 
+  summarise(well_count=sum(Wells_NHU,na.rm=TRUE),
+            pop_served=sum(Population_Served_Est,na.rm=TRUE))
+```
+
+#Outputting CSVs
+```{r}
+write.csv(block_wells,"output//block_wells.csv",row.names=FALSE)
+write.csv(bg_wells,"output//bg_wells.csv",row.names=FALSE)
+write.csv(tr_wells,"output//tr_wells.csv",row.names=FALSE)
+write.csv(co_wells,"output//co_wells.csv",row.names=FALSE)
+```
+
+

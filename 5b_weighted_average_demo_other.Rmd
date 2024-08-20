@@ -1,0 +1,109 @@
+---
+title: "5_weighted_average_demographics"
+author: "Wesley Hayes"
+date: "2024-03-04"
+output: html_document
+---
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+
+#Loading Data
+```{r}
+#loading well predictions
+block_wells <- read.csv("output//block_wells.csv")
+
+#loading bg full data
+bg_combined <- read.csv("output//block_group_data.csv")
+```
+
+#Block Group BIPOC Percentage + geometry
+```{r}
+dec_check <- load_variables(2010,"sf1")
+#race from 2010 decennial census
+block_race <- get_decennial(state="NC",
+                         geography="block",
+                         year=2010,
+                         sumfile = "sf1",
+                         variables= c(total_pop="P005001",
+                                      white_alone="P005003",
+                                      not_hisp="P005002",
+                                      black_alone="P005004",
+                                      american_indian_alone="P005005",
+                                      asian_alone="P005006",
+                                      pac_isl_alone="P005007",
+                                      other_alone="P005008",
+                                      two_plus_alone="P005009"
+                                      ),
+                         geometry=FALSE)
+```
+#Initial Processing
+```{r}
+
+block_race <- block_race %>% 
+           pivot_wider(names_from = variable,values_from = value) %>% 
+           mutate(block_bipoc=(total_pop-white_alone)/total_pop*100,
+                  not_hisp_alone=not_hisp/total_pop*100,
+                  white_alone=white_alone/total_pop*100,
+                  black_alone=black_alone/total_pop*100,
+                  american_indian_alone=american_indian_alone/total_pop*100,
+                  asian_alone=asian_alone/total_pop*100,
+                  pac_isl_alone = pac_isl_alone/total_pop*100,
+                  other_alone=other_alone/total_pop*100,
+                  two_plus_alone=two_plus_alone/total_pop*100) %>% 
+           select(-NAME,-total_pop)
+
+```
+
+#Weighted Average Race Calculation 
+```{r}
+#converting to character for join
+block_wells$GEOID <- as.character(block_wells$GEOID)
+
+#joining data
+block_race <- block_race %>% 
+  left_join(block_wells,by="GEOID")
+
+#calculating products for weighted average calculation
+block_race <- block_race %>% mutate(bipoc_well=block_bipoc*well_count,
+                                    white_well=white_alone*well_count,
+                                    black_well=black_alone*well_count,
+                                    american_indian_well=american_indian_alone*well_count,
+                                    pac_isl_well=pac_isl_alone*well_count,
+                                    asian_well=asian_alone*well_count,
+                                    other_well=other_alone*well_count,
+                                    two_plus_well=two_plus_alone*well_count,
+                                    not_hisp_well=not_hisp_alone*well_count)
+
+
+#calculating weighted average of bipoc percentage for wells and tests
+well_bipoc <- sum(block_race$bipoc_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_white <- sum(block_race$white_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_black <- sum(block_race$black_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_american_indian <- sum(block_race$american_indian_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_asian <- sum(block_race$asian_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_other <- sum(block_race$other_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_two_plus <- sum(block_race$two_plus_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_not_hisp <- sum(block_race$not_hisp_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+well_pac_isl  <- sum(block_race$pac_isl_well,na.rm=TRUE)/sum(block_race$well_count,na.rm=TRUE)
+
+```
+
+
+

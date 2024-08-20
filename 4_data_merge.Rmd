@@ -1,0 +1,194 @@
+---
+title: "4_data_merge"
+author: "Wesley Hayes"
+date: "2024-03-04"
+output: html_document
+---
+
+
+#Setup and initialization
+```{r setup}
+#clearing environment
+remove(list=ls())
+
+#installing libraries 
+library(sf)
+library(tidyverse)
+library(readxl)
+library(viridis)
+library(ggspatial)
+library(ggpubr)
+library(lubridate)
+library(tidycensus)
+
+#removing scientific notation so GEO_IDs can be viewed
+options(scipen = 999)
+```
+#Loading Data 
+```{r}
+#Loading Census Data
+bg_demo <- st_read("output//bg_demo.shp")
+tr_demo <- st_read("output//tract_demo.shp")
+co_demo <- st_read("output//county_demo.shp")
+
+#loading testing dfs
+nc_testing_locations <- read.csv("output//nc_testing_locations.csv")
+arsenic_data_ind <- read.csv("output//arsenic_data_ind.csv")
+
+#loading well predictions
+bg_wells <- read.csv("output//bg_wells.csv")
+tr_wells <- read.csv("output//tr_wells.csv")
+co_wells <- read.csv("output//co_wells.csv")
+
+#reading urban boundaries
+urban_boundaries <- st_read("raw//NCDOT_Smoothed_Urban_Boundaries.shp")
+```
+#Adding Geometry to testing locations
+```{r}
+#creating simple features point object from testing locations
+nc_testing_locations <- st_as_sf(nc_testing_locations,coords=c("longitude","latitude"),crs=4326)
+arsenic_data_ind <- st_as_sf(arsenic_data_ind,coords=c("longitude","latitude"),crs=4326)
+
+#adding demographics based on testing location
+nc_testing_locations <- nc_testing_locations %>% st_join(bg_demo)
+nc_testing_locations <- nc_testing_locations %>% st_join(tr_demo)
+nc_testing_locations <- nc_testing_locations %>% st_join(co_demo)
+
+#adding demographics based on testing location
+arsenic_data_ind <- arsenic_data_ind %>% st_join(bg_demo)
+arsenic_data_ind <- arsenic_data_ind %>% st_join(tr_demo)
+arsenic_data_ind <- arsenic_data_ind %>% st_join(co_demo)
+
+```
+
+#Aggregating BG data
+```{r}
+#summarizing arsenic data
+bg_arsenic_summary <- arsenic_data_ind %>% 
+  st_drop_geometry() %>%
+  group_by(BG_ID) %>%
+  summarise(arsenic_test_count=n(),
+            arsenic_exceedance_5ppb=sum(exceedance_5ppb,na.rm=TRUE))
+
+#summarizing testing data
+bg_testing_summary <- nc_testing_locations %>%
+  st_drop_geometry() %>% 
+  group_by(BG_ID) %>% 
+  summarise(test_count=n())
+```
+
+#Assigning Index
+```{r}
+#creating index using 50% bipoc and 16.4 % poverty as threshold
+#https://www.census.gov/content/dam/Census/library/publications/2016/acs/acsbr15-01.pdf
+bg_demo <- bg_demo %>% mutate(index=ifelse(bg_bipoc > 50 & bg_poverty >= 16.4,4,ifelse(bg_bipoc > 50 & bg_poverty < 16.4,3,ifelse(bg_bipoc <= 50 & bg_poverty >= 16.4,2,1))))
+```
+
+
+#Determining Urban + Rural BGs
+```{r}
+#creating point object for pairing bg to urban rural boundaries
+bg_combined <- bg_demo %>% st_centroid()
+
+#transforming urban boundaries and creating binary urban id
+urban_boundaries <- urban_boundaries %>%
+  st_transform(crs=4326) %>% 
+  mutate(urban_area=1) %>% select(urban_area)
+
+#setting for joining layers
+sf_use_s2(FALSE)
+
+#assigning urban binary to each bg based on centroid and removing geometry
+bg_combined <- bg_combined %>% 
+  st_join(urban_boundaries) %>% 
+  st_drop_geometry()
+
+#replacing NA with 0 for urban binary 
+bg_combined$urban_area[is.na(bg_combined$urban_area)] <- 0
+```
+
+#Creating Combined BG dataframe
+```{r}
+
+#have to reset the bg_wells ID to character
+bg_wells$BG_ID <- as.character(bg_wells$BG_ID)
+
+bg_combined <- bg_combined %>% 
+  left_join(bg_testing_summary,by="BG_ID") %>%
+  left_join(bg_arsenic_summary,by="BG_ID") %>%
+  left_join(bg_wells,by="BG_ID")
+```
+
+
+#Generating summary tables for table 1 
+```{r}
+#replacing 0 well count with NA to match testing and arsenic
+bg_combined$well_count[bg_combined$well_count == 0] <- NA
+
+#creating index summary table to populate table 1
+total_summary <- bg_combined %>% 
+  group_by(index) %>% 
+  summarise(total_pop=sum(total_pop,na.rm=TRUE),
+            well_total=sum(well_count,na.rm=TRUE),
+            pop_served=sum(pop_served,na.rm=TRUE),
+            well_bg=sum(!is.na(well_count)),
+            test_total=sum(test_count,na.rm=TRUE),
+            test_bg=sum(!is.na(test_count)),
+            arsenic_test_total=sum(arsenic_test_count,na.rm=TRUE),
+            arsenic_test_bg=sum(!is.na(arsenic_test_count)),
+            arsenic_exceedance_5ppb=sum(arsenic_exceedance_5ppb,na.rm=TRUE))
+
+#creating urban and rural seperated dfs
+bg_combined_urban = bg_combined %>% filter(urban_area==1)
+bg_combined_rural = bg_combined %>% filter(urban_area==0)
+
+#creating index summary table to populate table 1
+urban_summary <- bg_combined_urban %>% 
+  group_by(index) %>% 
+  summarise(total_pop=sum(total_pop,na.rm=TRUE),
+            well_total=sum(well_count,na.rm=TRUE),
+            pop_served=sum(pop_served,na.rm=TRUE),
+            well_bg=sum(!is.na(well_count)),
+            test_total=sum(test_count,na.rm=TRUE),
+            test_bg=sum(!is.na(test_count)),
+            arsenic_test_total=sum(arsenic_test_count,na.rm=TRUE),
+            arsenic_test_bg=sum(!is.na(arsenic_test_count)),
+            arsenic_exceedance_5ppb=sum(arsenic_exceedance_5ppb,na.rm=TRUE))
+
+#creating index summary table to populate table 1
+rural_summary <- bg_combined_rural %>% 
+  group_by(index) %>% 
+  summarise(total_pop=sum(total_pop,na.rm=TRUE),
+            well_total=sum(well_count,na.rm=TRUE),
+            pop_served=sum(pop_served,na.rm=TRUE),
+            well_bg=sum(!is.na(well_count)),
+            test_total=sum(test_count,na.rm=TRUE),
+            test_bg=sum(!is.na(test_count)),
+            arsenic_test_total=sum(arsenic_test_count,na.rm=TRUE),
+            arsenic_test_bg=sum(!is.na(arsenic_test_count)),
+            arsenic_exceedance_5ppb=sum(arsenic_exceedance_5ppb,na.rm=TRUE))
+```
+#Plotting BG level index - Figure 1
+```{r}
+#converting to character to make it discrete
+bg_demo$index <- as.character(bg_demo$index)
+
+#plotting
+ggplot() + geom_sf(data=bg_demo,aes(fill=index,geometry=geometry),color=NA) + scale_fill_manual(values=c("#3182bd","#9ecae1","#31a354","#a1d99b")) + theme_classic() +  theme(legend.position="left",
+        text=element_text(size=14),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+bg_index_summary <- bg_demo %>% group_by(index) %>% summarize(n_bg=n())
+```
+
+
+
+#Outputting Data
+```{r}
+write.csv(bg_combined,"output//block_group_data.csv")
+```
+
+
+
+
